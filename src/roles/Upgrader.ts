@@ -1,36 +1,26 @@
-function isRoomController(structure: StructureController | undefined): structure is StructureController {
-  return structure !== undefined;
-}
+import { Worker } from "../tasks/Worker";
+import { WorkerAction, WorkerTask } from "../tasks/WorkerTask";
+import { sortedPriorityQueue } from "../tasks/Queue";
 
-export class Upgrader {
-  public static spawnName = (): string => {
-    return "Upgrader" + Game.time;
-  };
+export class Upgrader extends Worker {
+  constructor() {
+    super();
+    this.namePrefix = "Upgrader";
+    this.role = "upgrader";
+    this.bodyParts = [WORK, CARRY, MOVE];
+  }
 
-  public static parts = (): BodyPartConstant[] => [WORK, WORK, MOVE, MOVE, CARRY];
-
-  public static run = (creep: Creep): void => {
-    if (creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
-      creep.memory.working = false;
-    }
-
-    if (!creep.memory.working && creep.store.getFreeCapacity() == 0) {
-      creep.memory.working = true;
-    }
-
-    if (!creep.memory.working) {
-      let src = creep.room.find(FIND_STRUCTURES, {
-        filter: (structure: AnyStructure): boolean => structure.structureType === STRUCTURE_STORAGE
-      })[0];
-      if (creep.withdraw(src, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(src, { visualizePathStyle: { stroke: "#ffaa00" } });
-      }
-    } else {
-      if (isRoomController(creep.room.controller)) {
-        if (creep.upgradeController(creep.room.controller) === ERR_NOT_IN_RANGE) {
-          creep.moveTo(creep.room.controller, { visualizePathStyle: { stroke: "#ffffff" } });
+  spawn(spawn: StructureSpawn): void {
+    console.log("Spawning upgrader!");
+    if (spawn.room.controller) {
+      super.spawn(spawn, {
+        memory: {
+          role: "upgrader",
+          currentTask: new WorkerTask(WorkerAction.upgradeRoom, spawn.room.controller.id),
+          nextTasks: [],
+          taskQueue: sortedPriorityQueue<WorkerTask>()
         }
-      }
+      });
     }
-  };
+  }
 }

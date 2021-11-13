@@ -1,40 +1,41 @@
-import { Random } from "utils/Random";
+import { Worker } from "../tasks/Worker";
+import { WorkerAction, WorkerTask } from "../tasks/WorkerTask";
+import { sortedPriorityQueue } from "../tasks/Queue";
 
-function isStoreStructure(structure: AnyStructure): structure is AnyStoreStructure {
-  return (structure as AnyStoreStructure).store !== undefined;
-}
+// The harvester is a dedicated miner. It picks the source with the fewest harvesters nearby.
+export class Harvester extends Worker {
+  constructor() {
+    super();
+    this.namePrefix = "Harvester";
+    this.role = "harvester";
+    this.bodyParts = [WORK, WORK, MOVE];
+  }
 
-export class Harvester {
-  public static spawnName = (): string => {
-    return "Harvester" + Game.time;
-  };
-
-  public static parts = (): BodyPartConstant[] => [WORK, WORK, MOVE];
-
-  public static spawn = (spawn: StructureSpawn) => {
+  spawn(spawn: StructureSpawn): void {
     console.log("Spawning harvester!");
-    let src = Random.Pick(spawn.room.find(FIND_SOURCES)) as Source;
-    spawn.spawnCreep(Harvester.parts(), Harvester.spawnName(), {
+    let sources = spawn.room.find(FIND_SOURCES);
+    let min = 100;
+    let srcPos: RoomPosition = spawn.pos;
+    let targetId = "";
+    for (const srcId in sources) {
+      let src = sources[srcId];
+      let nearby = src.pos.findInRange(FIND_MY_CREEPS, 1, {
+        filter: (c: Creep): boolean => c.memory.role === "harvester"
+      });
+      if (nearby.length <= min) {
+        min = nearby.length;
+        srcPos = src.pos;
+        targetId = src.id;
+      }
+    }
+
+    super.spawn(spawn, {
       memory: {
         role: "harvester",
-        srcId: src.id
+        currentTask: new WorkerTask(WorkerAction.harvestEnergy, targetId),
+        nextTasks: [],
+        taskQueue: sortedPriorityQueue<WorkerTask>()
       }
     });
-  };
-
-  public static run = (creep: Creep): void => {
-    if (creep.memory.srcId) {
-      let src = Game.getObjectById(creep.memory.srcId) as Source;
-      if (creep.harvest(src) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(src, { visualizePathStyle: { stroke: "#ffaa00" } });
-      }
-      return;
-    } else {
-      let src = creep.room.find(FIND_SOURCES)[0];
-      if (creep.harvest(src) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(src, { visualizePathStyle: { stroke: "#ffaa00" } });
-      }
-      return;
-    }
-  };
+  }
 }
