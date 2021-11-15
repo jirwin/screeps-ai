@@ -18,11 +18,11 @@ export enum WorkerAction {
 export class WorkerTask {
   action: WorkerAction = WorkerAction.idle;
   targetId?: string;
-  priority: number = 1;
+  priority: number = 5;
 
   constructor(action: WorkerAction, targetId?: string, priority?: number) {
     this.action = action;
     this.targetId = targetId;
-    this.priority = priority || 1;
+    this.priority = priority || 5;
   }
 }

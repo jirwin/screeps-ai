@@ -1,6 +1,6 @@
 import { Worker } from "../tasks/Worker";
 import { WorkerAction, WorkerTask } from "../tasks/WorkerTask";
-import { sortedPriorityQueue } from "../tasks/Queue";
+import { sortedPriorityQueue } from "../utils/Queue";
 
 // A hauler is a dedicated class that hauls energy from mines to central storage.
 export class Hauler extends Worker {

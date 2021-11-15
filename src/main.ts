@@ -1,14 +1,11 @@
 import { ErrorMapper } from "utils/ErrorMapper";
-import { Harvester } from "roles/Harvester";
-import { filter } from "lodash";
 import { WorkerTask } from "./tasks/WorkerTask";
-import { Upgrader } from "./roles/Upgrader";
-import { Builder } from "./roles/Builder";
-import { Filler } from "./roles/Filler";
-import { Hauler } from "./roles/Hauler";
-import { PriorityQueue } from "./tasks/Queue";
+import { PriorityQueue } from "./utils/Queue";
 import { Worker } from "./tasks/Worker";
 import { TaskController } from "./tasks/TaskController";
+import { ConstructorController, ConstructTask } from "./constructor/ConstructorController";
+import { RoadConstructor } from "./constructor/Roads";
+import { RoomBuilding } from "./constructor/RoomBuilder";
 
 declare global {
   /*
@@ -24,6 +21,8 @@ declare global {
   interface Memory {
     uuid: number;
     log: any;
+    constructionQueues: { [roomName: string]: ConstructTask[] };
+    roads: { [name: string]: number[] };
   }
 
   interface CreepMemory {
@@ -45,19 +44,18 @@ declare global {
 }
 
 // Role classes. Instead of using a separate instance of these for each creep, we pass creeps into them.
-let harvester = new Harvester();
-let upgrader = new Upgrader();
-let builder = new Builder();
-let filler = new Filler();
-let hauler = new Hauler();
-let worker = new Worker();
-let taskController = new TaskController();
+let constructor = new ConstructorController();
+let roads = new RoadConstructor(constructor);
+let worker = new Worker(roads);
+let taskController = new TaskController(worker);
 
 // When compiling TS to JS and bundling with rollup, the line numbers and file names in error messages change
 // This utility uses source maps to get the line numbers and file names of the original, TS source code
 export const loop = ErrorMapper.wrapLoop(() => {
   console.log(`Current game tick is ${Game.time}`);
 
+  constructor.gc();
+  roads.gc();
   // Automatically delete memory of missing creeps
   for (const name in Memory.creeps) {
     if (!(name in Game.creeps)) {
@@ -92,34 +90,20 @@ export const loop = ErrorMapper.wrapLoop(() => {
   for (const name in Game.spawns) {
     let spawn = Game.spawns[name];
 
-    let workers = filter(Game.creeps, (creep: Creep): boolean => creep.memory.role !== "");
-    if (workers.length < 10) {
-      worker.spawn(spawn);
-    }
+    // worker.spawn(spawn);
 
-    // let harvesters = filter(Game.creeps, (creep: Creep): boolean => creep.memory.role === "harvester");
-    // if (harvesters.length < 1) {
-    //   harvester.spawn(spawn);
+    // Handle basic road logic from the get go - Spawn -> [Sources, Controller]
+    let sources = spawn.room.find(FIND_SOURCES);
+    // roads.connect(spawn.pos, sources);
+    // if (spawn.room.controller) {
+    //   roads.connect(spawn.pos, [spawn.room.controller.pos]);
     // }
-    //
-    // let fillers = filter(Game.creeps, (creep: Creep): boolean => creep.memory.role === "filler");
-    // if (fillers.length < 2) {
-    //   filler.spawn(spawn);
-    // }
-    //
-    // let builders = filter(Game.creeps, (creep: Creep): boolean => creep.memory.role === "builder");
-    // if (builders.length < 1) {
-    //   builder.spawn(spawn);
-    // }
-    //
-    // let haulers = filter(Game.creeps, (creep: Creep): boolean => creep.memory.role === "hauler");
-    // if (haulers.length < 1) {
-    //   hauler.spawn(spawn);
-    // }
-    //
-    // let upgraders = filter(Game.creeps, (creep: Creep): boolean => creep.memory.role === "upgrader");
-    // if (upgraders.length < 1) {
-    //   upgrader.spawn(spawn);
+
+    let freePOSs = RoomBuilding.FindFreePosNearby(sources[0].pos, 5, 3, 7, [], true);
+    let pos = freePOSs.next();
+    // while (pos) {
+    //   console.log("POS", JSON.stringify(pos));
+    //   pos = freePOSs.next();
     // }
 
     if (spawn.spawning) {
@@ -131,27 +115,6 @@ export const loop = ErrorMapper.wrapLoop(() => {
     }
   }
 
-  taskController.tick();
-
-  // for (const name in Game.creeps) {
-  //   let creep = Game.creeps[name];
-  //   if (creep.memory.role === "harvester") {
-  //     harvester.run(creep);
-  //   }
-  //
-  //   // if (creep.memory.role === "upgrader") {
-  //   //   upgrader.run(creep);
-  //   // }
-  //   //
-  //   // if (creep.memory.role === "builder") {
-  //   //   builder.run(creep);
-  //   // }
-  //   //
-  //   // if (creep.memory.role === "filler") {
-  //   //   filler.run(creep);
-  //   // }
-  //   // if (creep.memory.role === "hauler") {
-  //   //   hauler.run(creep);
-  //   // }
-  // }
+  // taskController.tick();
+  // constructor.tick();
 });

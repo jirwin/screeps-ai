@@ -1,6 +1,6 @@
 import { Worker } from "../tasks/Worker";
 import { WorkerAction, WorkerTask } from "../tasks/WorkerTask";
-import { sortedPriorityQueue } from "../tasks/Queue";
+import { sortedPriorityQueue } from "../utils/Queue";
 
 // The harvester is a dedicated miner. It picks the source with the fewest harvesters nearby.
 export class Harvester extends Worker {

@@ -6,17 +6,21 @@ The general strategy:
   * if
  */
 import { Worker } from "./Worker";
-import { difference, filter, sortBy } from "lodash";
+import { difference, filter } from "lodash";
 import { WorkerAction, WorkerTask } from "./WorkerTask";
 import { Random } from "../utils/Random";
-
-const worker = new Worker();
 
 function isStoreStructure(structure: AnyStructure): structure is AnyStoreStructure {
   return (structure as AnyStoreStructure).store !== undefined;
 }
 
 export class TaskController {
+  worker: Worker;
+
+  constructor(worker: Worker) {
+    this.worker = worker;
+  }
+
   // In level one, we really just want to rush to level 2. Only upgrade the room.
   level1(room: Room, workers: Creep[]): void {
     while (workers.length > 0) {
@@ -25,8 +29,8 @@ export class TaskController {
         if (room.controller) {
           w.memory.role = "upgrader";
           w.memory.roleTarget = room.controller.id;
-          worker.queueTask(w, new WorkerTask(WorkerAction.upgradeRoom, room.controller.id));
-          worker.completeTask(w);
+          this.worker.queueTask(w, new WorkerTask(WorkerAction.upgradeRoom, room.controller.id));
+          this.worker.completeTask(w);
         }
       }
     }
@@ -51,6 +55,9 @@ export class TaskController {
       desiredMinerCount = Math.ceil(allWorkers.length * 0.2);
     }
 
+    // Ensure we have at least one miner for each source
+    desiredMinerCount = Math.max(room.find(FIND_SOURCES).length, desiredMinerCount);
+
     let desiredBuilderCount = Math.ceil(allWorkers.length * 0.4);
     let desiredHaulerCount = Math.ceil(allWorkers.length * 0.2);
     let desiredSupplyCount = Math.ceil(allWorkers.length * 0.2);
@@ -68,62 +75,76 @@ export class TaskController {
       const haulers = room.find(FIND_MY_CREEPS, {
         filter: (c: Creep): boolean => c.memory.role === "hauler"
       });
+      const upgraders = room.find(FIND_MY_CREEPS, {
+        filter: (c: Creep): boolean => c.memory.role === "upgrader"
+      });
+      const repairers = room.find(FIND_MY_CREEPS, {
+        filter: (c: Creep): boolean => c.memory.role === "repairer"
+      });
+
+      console.log(`
+      ${miners.length} miners
+      ${builders.length} builders
+      ${suppliers.length} suppliers
+      ${haulers.length} haulers
+      ${upgraders.length} upgraders
+      ${allWorkers.length} total workers`);
+
       const w = workers.pop();
       if (w) {
         console.log(`${miners.length} actual miners - ${desiredMinerCount} desired miners`);
         if (miners.length < desiredMinerCount) {
           w.memory.role = "miner";
-          worker.queueTask(w, new WorkerTask(WorkerAction.perpetualHarvestEnergy));
-          worker.completeTask(w);
+          this.worker.queueTask(w, new WorkerTask(WorkerAction.perpetualHarvestEnergy));
+          this.worker.completeTask(w);
           continue;
         }
 
+        // Move mined resources to containers
         if (haulers.length < desiredHaulerCount) {
-          const hungryContainers = room.find(FIND_MY_STRUCTURES, {
-            filter: (s: AnyStructure): boolean => {
-              if (s.structureType !== STRUCTURE_STORAGE && s.structureType !== STRUCTURE_CONTAINER) {
-                return false;
-              }
-              if (isStoreStructure(s)) {
-                if (s.store.getFreeCapacity() !== 0) {
-                  return true;
-                }
-              } else {
-                return false;
-              }
-
-              return false;
-            }
+          const hungryContainers = room.find(FIND_STRUCTURES, {
+            filter: (s: AnyStructure): boolean =>
+              s.structureType === STRUCTURE_STORAGE || s.structureType === STRUCTURE_CONTAINER
           });
 
-          const fedContainers = room.find(FIND_MY_STRUCTURES, {
-            filter: (s: AnyStructure): boolean => {
-              for (const id in haulers) {
-                const haul = haulers[id];
-                if (haul.memory.roleTarget) {
-                  if (s.id === haul.memory.roleTarget) {
-                    return true;
-                  }
-                }
-              }
-              return false;
-            }
-          });
-
-          let haulStructures = difference(hungryContainers, fedContainers);
-          if (haulStructures.length > 0) {
-            let target = Random.Pick(haulStructures);
+          if (hungryContainers.length > 0) {
+            let target = Random.Pick(hungryContainers);
             w.memory.role = "hauler";
             w.memory.roleTarget = target.id;
-            worker.queueTask(w, new WorkerTask(WorkerAction.storeEnergy, target.id));
-            worker.completeTask(w);
+            this.worker.queueTask(w, new WorkerTask(WorkerAction.storeEnergy, target.id));
+            this.worker.completeTask(w);
             continue;
           }
         }
 
+        console.log(`There are ${upgraders.length} upgraders`);
+        if (upgraders.length < 1) {
+          if (room.controller) {
+            w.memory.role = "upgrader";
+            w.memory.roleTarget = room.controller.id;
+            this.worker.queueTask(w, new WorkerTask(WorkerAction.upgradeRoom, room.controller.id));
+            this.worker.completeTask(w);
+            continue;
+          }
+        }
+
+        if (repairers.length < 1) {
+          const repairable = w.pos.findClosestByPath(FIND_STRUCTURES, {
+            filter: (s: AnyStructure): boolean => s.hits < s.hitsMax && s.hits < 1000
+          });
+          if (repairable) {
+            w.memory.role = "repairer";
+            w.memory.roleTarget = repairable.id;
+            this.worker.queueTask(w, new WorkerTask(WorkerAction.repair, repairable.id));
+            this.worker.completeTask(w);
+            continue;
+          }
+        }
+
+        // Supply energy to things like spawners, extensions, and towers. We only assign a single worker to supply a
+        // structure at once.
         if (suppliers.length < desiredSupplyCount) {
-          // Find structures that need to be fed and pick one randomly to fill, and aren't currently assigned to already.
-          const hungryStructures = room.find(FIND_MY_STRUCTURES, {
+          const hungryStructures = room.find(FIND_STRUCTURES, {
             filter: (s: AnyStructure): boolean => {
               if (s.structureType === STRUCTURE_STORAGE || s.structureType === STRUCTURE_CONTAINER) {
                 return false;
@@ -156,41 +177,19 @@ export class TaskController {
             let s = Random.Pick(supplyStructures);
             w.memory.role = "supplier";
             w.memory.roleTarget = s.id;
-            worker.queueTask(w, new WorkerTask(WorkerAction.supplyEnergy, s.id));
-            worker.completeTask(w);
+            this.worker.queueTask(w, new WorkerTask(WorkerAction.supplyEnergy, s.id));
+            this.worker.completeTask(w);
             continue;
           }
         }
 
         if (builders.length < desiredBuilderCount) {
-          // Find structures that need to be fed and pick one randomly to fill, and aren't currently assigned to already.
-          const hungryConstruction = room.find(FIND_MY_CONSTRUCTION_SITES);
-
-          // const fedConstruction = room.find(FIND_MY_CONSTRUCTION_SITES, {
-          //   filter: (s: ConstructionSite): boolean => {
-          //     for (const id in builders) {
-          //       const b = builders[id];
-          //       if (b.memory.roleTarget) {
-          //         if (s.id === b.memory.roleTarget) {
-          //           return true;
-          //         }
-          //       }
-          //     }
-          //     return false;
-          //   }
-          // });
-
-          // let buildSites = difference(hungryConstruction, fedConstruction);
-          const buildSites = sortBy(
-            hungryConstruction,
-            (site: ConstructionSite): any => (site.progress / site.progressTotal) * -1
-          );
-          if (buildSites.length > 0) {
-            let s = buildSites[0];
+          const buildSite = w.pos.findClosestByPath(FIND_MY_CONSTRUCTION_SITES);
+          if (buildSite) {
             w.memory.role = "builder";
-            w.memory.roleTarget = s.id;
-            worker.queueTask(w, new WorkerTask(WorkerAction.build, s.id));
-            worker.completeTask(w);
+            w.memory.roleTarget = buildSite.id;
+            this.worker.queueTask(w, new WorkerTask(WorkerAction.build, buildSite.id));
+            this.worker.completeTask(w);
             continue;
           }
         }
@@ -199,8 +198,8 @@ export class TaskController {
         if (room.controller) {
           w.memory.role = "upgrader";
           w.memory.roleTarget = room.controller.id;
-          worker.queueTask(w, new WorkerTask(WorkerAction.upgradeRoom, room.controller.id));
-          worker.completeTask(w);
+          this.worker.queueTask(w, new WorkerTask(WorkerAction.upgradeRoom, room.controller.id));
+          this.worker.completeTask(w);
         }
       }
     }
@@ -240,7 +239,7 @@ export class TaskController {
       const roomCreeps = filter(Game.creeps, (c: Creep): boolean => c.room.name === room.name);
       for (const cId in roomCreeps) {
         let creep = roomCreeps[cId];
-        worker.run(creep);
+        this.worker.run(creep);
       }
     }
   }

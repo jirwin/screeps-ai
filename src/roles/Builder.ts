@@ -1,6 +1,6 @@
 import { Worker } from "../tasks/Worker";
 import { WorkerAction, WorkerTask } from "../tasks/WorkerTask";
-import { sortedPriorityQueue } from "../tasks/Queue";
+import { sortedPriorityQueue } from "../utils/Queue";
 
 export class Builder extends Worker {
   constructor() {

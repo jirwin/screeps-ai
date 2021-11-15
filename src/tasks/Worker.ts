@@ -1,7 +1,7 @@
 import { WorkerAction, WorkerTask } from "./WorkerTask";
 import { Random } from "../utils/Random";
-import { sortBy } from "lodash";
-import { sortedPriorityQueue } from "./Queue";
+import { sortedPriorityQueue } from "../utils/Queue";
+import { RoadConstructor } from "../constructor/Roads";
 
 function unknownState(_x: never): never {
   throw new Error("unknown state");
@@ -17,6 +17,11 @@ export class Worker {
   bodyParts: BodyPartConstant[] = [WORK, MOVE, CARRY];
   namePrefix: string = "Worker";
   role: string = "worker";
+  roadController: RoadConstructor;
+
+  constructor(roadController: RoadConstructor) {
+    this.roadController = roadController;
+  }
 
   parts(): BodyPartConstant[] {
     return this.bodyParts;
@@ -111,11 +116,14 @@ export class Worker {
         this.completeTask(creep);
         return;
       }
-      creep.moveTo(target, {
+      const err = creep.moveTo(target, {
         visualizePathStyle: {
           stroke: "#ffffff"
         }
       });
+      if (err === OK || err === ERR_TIRED) {
+        this.roadController.shouldBuildAt(creep.pos);
+      }
 
       return;
     }
@@ -195,25 +203,21 @@ export class Worker {
       return;
     }
 
-    if (task.targetId) {
-      console.log("unexpected target associated with collect energy task -- ignoring");
-    }
-
     // We need to find something to collect energy from
-    let sources = creep.room.find(FIND_STRUCTURES, {
+    let source = creep.pos.findClosestByPath(FIND_STRUCTURES, {
       filter: (structure: AnyStructure): boolean =>
         (structure.structureType === STRUCTURE_STORAGE || structure.structureType === STRUCTURE_CONTAINER) &&
         structure.store.getUsedCapacity() > 50
     });
-    if (sources.length > 0) {
-      this.injectTask(creep, new WorkerTask(WorkerAction.withdrawEnergy, sources[0].id));
+    if (source) {
+      this.injectTask(creep, new WorkerTask(WorkerAction.withdrawEnergy, source.id));
       return;
     }
 
-    // let resources = creep.room.find(FIND_DROPPED_RESOURCES);
-    // if (resources.length) {
-    //   let r = Random.Pick(resources);
-    //   this.injectTask(creep, new WorkerTask(WorkerAction.pickupEnergy, r.id));
+    // FIXME(jirwin): This causes creeps to stack up at drop miners...
+    // let resource = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES);
+    // if (resource) {
+    //   this.injectTask(creep, new WorkerTask(WorkerAction.pickupEnergy, resource.id));
     //   return;
     // }
 
@@ -300,6 +304,12 @@ export class Worker {
           this.completeTask(creep);
           return;
         }
+
+        // Build until we are out of energy
+        if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) {
+          this.completeTask(creep);
+          return;
+        }
       } else {
         this.completeTask(creep);
         return;
@@ -307,24 +317,45 @@ export class Worker {
     }
 
     // Find the most completed construction site
-    let constructTargets = creep.room.find(FIND_CONSTRUCTION_SITES, {
-      filter: (c: ConstructionSite): boolean => c.progress < c.progressTotal
-    });
-    if (constructTargets.length > 0) {
-      constructTargets = sortBy(constructTargets, (tgt: ConstructionSite) => {
-        return (tgt.progress / tgt.progressTotal) * -1;
-      });
-
-      this.targetTask(creep, constructTargets[0]);
+    let constructTarget = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
+    if (constructTarget) {
+      this.targetTask(creep, constructTarget);
       return;
     }
   }
 
   // FIXME(jirwin): implement me
   repair(creep: Creep, task: WorkerTask): void {
+    if (!task.targetId) {
+      this.completeTask(creep);
+      return;
+    }
+
     // We are out of energy, get more.
-    if (creep.store.getUsedCapacity() === 0) {
+    if (creep.store.getUsedCapacity() < 10) {
       this.injectTask(creep, new WorkerTask(WorkerAction.fillCreepEnergy));
+      return;
+    }
+
+    let objectById = Game.getObjectById(task.targetId);
+    if (objectById) {
+      let target = objectById as AnyStructure;
+      const err = creep.repair(target);
+      if (err) {
+        if (err === ERR_NOT_IN_RANGE) {
+          this.queueMoveTask(creep, target);
+          return;
+        }
+
+        this.completeTask(creep);
+        return;
+      }
+
+      // repair the target until we are empty
+      if (creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+        this.completeTask(creep);
+        return;
+      }
     }
   }
 
@@ -333,6 +364,7 @@ export class Worker {
   upgradeRoom(creep: Creep, task: WorkerTask): void {
     if (!task.targetId) {
       console.log("unexpected upgrade task with no task id");
+      this.completeTask(creep);
       return;
     }
 
@@ -353,8 +385,10 @@ export class Worker {
         }
       }
 
+      // upgrade the target until we are empty
       if (creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
         this.completeTask(creep);
+        return;
       }
     }
   }
@@ -382,10 +416,12 @@ export class Worker {
           this.queueMoveTask(creep, target);
           return;
         }
+        this.completeTask(creep);
+        return;
       }
     } else {
-      // Our target doesn't exist, pick a new one
-      console.log("implement targetless withdraw");
+      this.completeTask(creep);
+      return;
     }
   }
 
@@ -404,9 +440,6 @@ export class Worker {
           if (err === ERR_NOT_IN_RANGE) {
             this.queueMoveTask(creep, tgt);
             return;
-          } else if (err === ERR_BUSY) {
-            // We're just busy so wait a tick
-            return;
           }
           this.completeTask(creep);
           return;
@@ -417,10 +450,9 @@ export class Worker {
       }
     }
 
-    let resourceTargets = creep.room.find(FIND_DROPPED_RESOURCES);
-    if (resourceTargets.length) {
-      let r = Random.Pick(resourceTargets);
-      this.targetTask(creep, r);
+    let resourceTarget = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES);
+    if (resourceTarget) {
+      this.targetTask(creep, resourceTarget);
       return;
     }
   }
@@ -477,7 +509,7 @@ export class Worker {
 
   // Picks an energy source and pushes a task to harvest it
   pickEnergySourceForHarvest(creep: Creep, task: WorkerTask): void {
-    let source = this.pickBestEnergySource(creep);
+    let source = creep.pos.findClosestByPath(FIND_SOURCES);
     if (source) {
       this.pushTask(creep, new WorkerTask(WorkerAction.harvestEnergy, source.id));
       this.completeTask(creep);
