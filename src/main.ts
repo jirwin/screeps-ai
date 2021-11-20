@@ -5,7 +5,7 @@ import { Worker } from "./tasks/Worker";
 import { TaskController } from "./tasks/TaskController";
 import { ConstructorController, ConstructTask } from "./constructor/ConstructorController";
 import { RoadConstructor } from "./constructor/Roads";
-import { RoomBuilding } from "./constructor/RoomBuilder";
+import { BuildingPlanner, ContainerBuildingPlan, ExtensionBuildingPlan } from "./constructor/RoomBuilder";
 
 declare global {
   /*
@@ -46,6 +46,7 @@ declare global {
 // Role classes. Instead of using a separate instance of these for each creep, we pass creeps into them.
 let constructor = new ConstructorController();
 let roads = new RoadConstructor(constructor);
+let buildingPlanner = new BuildingPlanner(constructor, roads);
 let worker = new Worker(roads);
 let taskController = new TaskController(worker);
 
@@ -90,21 +91,17 @@ export const loop = ErrorMapper.wrapLoop(() => {
   for (const name in Game.spawns) {
     let spawn = Game.spawns[name];
 
-    // worker.spawn(spawn);
+    worker.spawn(spawn);
 
     // Handle basic road logic from the get go - Spawn -> [Sources, Controller]
-    let sources = spawn.room.find(FIND_SOURCES);
+    // let sources = spawn.room.find(FIND_SOURCES);
     // roads.connect(spawn.pos, sources);
     // if (spawn.room.controller) {
     //   roads.connect(spawn.pos, [spawn.room.controller.pos]);
     // }
 
-    let freePOSs = RoomBuilding.FindFreePosNearby(sources[0].pos, 5, 3, 7, [], true);
-    let pos = freePOSs.next();
-    // while (pos) {
-    //   console.log("POS", JSON.stringify(pos));
-    //   pos = freePOSs.next();
-    // }
+    buildingPlanner.buildInRoom(spawn.room, ContainerBuildingPlan());
+    buildingPlanner.buildInRoom(spawn.room, ExtensionBuildingPlan());
 
     if (spawn.spawning) {
       let spawningCreep = Game.creeps[spawn.spawning.name];
@@ -115,6 +112,6 @@ export const loop = ErrorMapper.wrapLoop(() => {
     }
   }
 
-  // taskController.tick();
-  // constructor.tick();
+  taskController.tick();
+  constructor.tick();
 });

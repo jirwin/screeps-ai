@@ -1,3 +1,6 @@
+import { ConstructorController, ConstructTask } from "./ConstructorController";
+import { RoadConstructor } from "./Roads";
+
 type AvoidOpts = {
   range?: number;
   resolveTo?: number;
@@ -157,12 +160,15 @@ export class RoomBuilding {
         initialValue = DISQUALIFIED_ENTRY;
       }
       matrix[i][j] = matrix[i][j].reduce((res: { type: number; range: number }, o: LookAtResult) => {
+        console.log(JSON.stringify(o));
         if (res.type !== AVOID_AREA) {
           if (o.type === LOOK_TERRAIN && o.terrain === "wall") {
             res = OCCUPIED_ENTRY;
           } else if (o.type === LOOK_STRUCTURES && o.structure?.structureType !== STRUCTURE_ROAD) {
             res = OCCUPIED_ENTRY;
           } else if (o.type === LOOK_CONSTRUCTION_SITES && o.constructionSite?.structureType !== STRUCTURE_ROAD) {
+            res = OCCUPIED_ENTRY;
+          } else if (o.type === LOOK_SOURCES) {
             res = OCCUPIED_ENTRY;
           }
         }
@@ -308,5 +314,221 @@ export class RoomBuilding {
 
   public static isCheckered([x, y]: [number, number], [xOrigin, yOrigin]: [number, number]) {
     return (x + xOrigin) % 2 === (y + yOrigin) % 2;
+  }
+}
+
+interface BuildingPlanOpts {
+  poiCount?: number;
+  minFreeAdjSpaces?: number;
+  minPlacementDistance?: number;
+  avoidList?: AvoidObj[];
+  avoidIsCheckered?: boolean;
+  filter?: (s: AnyStructure) => boolean;
+  poiSort?: (a: number, b: number) => number;
+}
+
+export class BuildingPlan {
+  structureType: BuildableStructureConstant;
+  poiCount: number = -1;
+  minFreeAdjSpaces: number = 3;
+  minPlacementDistance: number = 3;
+  avoidList: AvoidObj[] = [];
+  avoidIsCheckered: boolean = false;
+  structureFilter: (s: AnyStructure) => boolean;
+
+  constructor(structureType: BuildableStructureConstant, opts?: BuildingPlanOpts) {
+    this.structureType = structureType;
+    this.structureFilter = (s: any): boolean => true;
+    if (opts) {
+      if (opts.minFreeAdjSpaces) {
+        this.minFreeAdjSpaces = opts.minFreeAdjSpaces;
+      }
+
+      if (opts.minPlacementDistance) {
+        this.minPlacementDistance = opts.minPlacementDistance;
+      }
+
+      if (opts.avoidList) {
+        this.avoidList = opts.avoidList;
+      }
+      if (opts.avoidIsCheckered) {
+        this.avoidIsCheckered = opts.avoidIsCheckered;
+      }
+
+      if (opts.poiCount) {
+        this.poiCount = opts.poiCount;
+      }
+
+      if (opts.filter) {
+        this.structureFilter = opts.filter;
+      }
+    }
+  }
+}
+
+export function ContainerBuildingPlan() {
+  return new BuildingPlan(STRUCTURE_CONTAINER, {
+    poiCount: 1,
+    minFreeAdjSpaces: 1,
+    minPlacementDistance: 7,
+    filter: s => s.structureType === STRUCTURE_CONTAINER || s.structureType === STRUCTURE_STORAGE,
+    avoidList: [new AvoidStruct(STRUCTURE_CONTAINER, { range: 7 })]
+  });
+}
+
+export function ExtensionBuildingPlan() {
+  return new BuildingPlan(STRUCTURE_EXTENSION, {
+    minFreeAdjSpaces: 3,
+    minPlacementDistance: 1,
+    avoidList: [
+      new AvoidStruct(STRUCTURE_ROAD),
+      new AvoidStruct(STRUCTURE_SPAWN),
+      new AvoidStruct(STRUCTURE_CONTROLLER),
+      new AvoidStruct(STRUCTURE_EXTENSION),
+      new AvoidStruct(STRUCTURE_CONTAINER),
+      new AvoidStruct(STRUCTURE_STORAGE),
+      new AvoidSource(2, (o: LookAtResult) => o.type === LOOK_SOURCES)
+    ]
+  });
+}
+
+const RoomLevelRange: { [lvl: number]: { [name: string]: number } } = {
+  0: { container: 1 },
+  1: { container: 1 },
+  2: {
+    container: 1,
+    extension: 5
+  },
+  3: {
+    container: 1,
+    extension: 5,
+    tower: 5
+  },
+  4: {
+    container: 1,
+    extension: 8,
+    tower: 5,
+    storage: 5
+  },
+  5: {
+    container: 1,
+    extension: 8,
+    tower: 5,
+    storage: 5
+  },
+  6: {
+    container: 1,
+    extension: 11,
+    tower: 5,
+    storage: 5
+  },
+  7: {
+    container: 1,
+    extension: 11,
+    tower: 5,
+    storage: 5,
+    spawn: 13
+  },
+  8: {
+    container: 1,
+    extension: 11,
+    tower: 15,
+    storage: 5,
+    spawn: 13
+  }
+};
+
+export class BuildingPlanner {
+  constructorController: ConstructorController;
+  roadConstructor: RoadConstructor;
+
+  constructor(cc: ConstructorController, rc: RoadConstructor) {
+    this.constructorController = cc;
+    this.roadConstructor = rc;
+  }
+
+  getMyStructs(room: Room, filter: (s: AnyStructure) => boolean): AnyStructure[] {
+    return room.find(FIND_STRUCTURES, { filter: filter });
+  }
+
+  getMySites(room: Room, filter: (s: ConstructionSite) => boolean): ConstructionSite[] {
+    return room.find(FIND_CONSTRUCTION_SITES, { filter: filter });
+  }
+
+  getDesiredNumberOfStructs(room: Room, plan: BuildingPlan): number {
+    if (room.controller) {
+      return CONTROLLER_STRUCTURES[plan.structureType][room.controller.level] || 0;
+    }
+    return 0;
+  }
+
+  getDesiredRange(room: Room, plan: BuildingPlan): number {
+    if (room.controller) {
+      const info = RoomLevelRange[room.controller.level];
+      return info[plan.structureType];
+    }
+    return 5;
+  }
+
+  *getBuildingPoI(room: Room) {
+    let s = room.find(FIND_SOURCES);
+
+    for (let i = 0; i < s.length; i++) {
+      yield s[i];
+    }
+  }
+
+  buildInRoom(room: Room, plan: BuildingPlan): boolean {
+    let existingStructs = this.getMyStructs(room, plan.structureFilter);
+    let existingSites = this.getMySites(room, (s: ConstructionSite): boolean => s.structureType === plan.structureType);
+    let plannedSiteCount = this.constructorController
+      .getScheduled(room)
+      .filter((v: ConstructTask): boolean => v.structure === plan.structureType).length;
+    let desired = this.getDesiredNumberOfStructs(room, plan);
+    let range = this.getDesiredRange(room, plan);
+    let howMany = existingStructs.length + existingSites.length;
+    let togo = desired - howMany - plannedSiteCount;
+
+    if (togo < 1) {
+      return false;
+    }
+
+    if (!room) {
+      return false;
+    }
+
+    let pois = this.getBuildingPoI(room);
+    for (let target of pois) {
+      let freePositions = RoomBuilding.FindFreePosNearby(
+        target.pos,
+        range,
+        plan.minFreeAdjSpaces,
+        plan.minPlacementDistance,
+        plan.avoidList,
+        plan.avoidIsCheckered
+      );
+      let howManyHere = 0;
+      let roads: RoomPosition[] = [];
+
+      for (const pos of freePositions) {
+        if (this.constructorController.schedule(new ConstructTask(plan.structureType, pos))) {
+          togo--;
+          howMany++;
+          roads.push(pos);
+        }
+        if (togo === 0 || howMany === plan.poiCount) {
+          break;
+        }
+      }
+
+      this.roadConstructor.connect(target.pos, roads);
+      if (togo === 0) {
+        break;
+      }
+    }
+    if (togo) {
+      console.log(`did not build ${togo}`);
+    }
+    return togo == 0;
   }
 }

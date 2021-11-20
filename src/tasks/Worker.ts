@@ -206,8 +206,7 @@ export class Worker {
     // We need to find something to collect energy from
     let source = creep.pos.findClosestByPath(FIND_STRUCTURES, {
       filter: (structure: AnyStructure): boolean =>
-        (structure.structureType === STRUCTURE_STORAGE || structure.structureType === STRUCTURE_CONTAINER) &&
-        structure.store.getUsedCapacity() > 50
+        structure.structureType === STRUCTURE_STORAGE || structure.structureType === STRUCTURE_CONTAINER
     });
     if (source) {
       this.injectTask(creep, new WorkerTask(WorkerAction.withdrawEnergy, source.id));
@@ -215,11 +214,11 @@ export class Worker {
     }
 
     // FIXME(jirwin): This causes creeps to stack up at drop miners...
-    // let resource = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES);
-    // if (resource) {
-    //   this.injectTask(creep, new WorkerTask(WorkerAction.pickupEnergy, resource.id));
-    //   return;
-    // }
+    let resource = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES);
+    if (resource) {
+      this.injectTask(creep, new WorkerTask(WorkerAction.pickupEnergy, resource.id));
+      return;
+    }
 
     console.log("no resources to pick up -- time to mine!");
     this.injectTask(creep, new WorkerTask(WorkerAction.harvestEnergy));
@@ -332,7 +331,7 @@ export class Worker {
     }
 
     // We are out of energy, get more.
-    if (creep.store.getUsedCapacity() < 10) {
+    if (creep.store.getUsedCapacity() === 0) {
       this.injectTask(creep, new WorkerTask(WorkerAction.fillCreepEnergy));
       return;
     }
@@ -393,7 +392,6 @@ export class Worker {
     }
   }
 
-  // FIXME(jirwin): implement targetless
   withdrawEnergy(creep: Creep, task: WorkerTask): void {
     if (!task.targetId) {
       console.log("unexpected withdraw energy with no target");
@@ -474,10 +472,10 @@ export class Worker {
             this.queueMoveTask(creep, target);
             return;
           }
-
+          // this.queueTask(creep, new WorkerTask(WorkerAction.storeEnergy));
+          // this.completeTask(creep);
           // We have an error. Pick a new target and try again.
-          this.queueTask(creep, new WorkerTask(WorkerAction.storeEnergy));
-          this.completeTask(creep);
+
           return;
         }
       } else {

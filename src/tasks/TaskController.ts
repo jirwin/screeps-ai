@@ -26,6 +26,14 @@ export class TaskController {
     while (workers.length > 0) {
       const w = workers.pop();
       if (w) {
+        const buildSite = w.pos.findClosestByPath(FIND_MY_CONSTRUCTION_SITES);
+        if (buildSite) {
+          w.memory.role = "builder";
+          w.memory.roleTarget = buildSite.id;
+          this.worker.queueTask(w, new WorkerTask(WorkerAction.build, buildSite.id));
+          this.worker.completeTask(w);
+          continue;
+        }
         if (room.controller) {
           w.memory.role = "upgrader";
           w.memory.roleTarget = room.controller.id;
@@ -128,7 +136,7 @@ export class TaskController {
           }
         }
 
-        if (repairers.length < 1) {
+        if (repairers.length < Math.ceil(allWorkers.length / 2)) {
           const repairable = w.pos.findClosestByPath(FIND_STRUCTURES, {
             filter: (s: AnyStructure): boolean => s.hits < s.hitsMax && s.hits < 1000
           });
